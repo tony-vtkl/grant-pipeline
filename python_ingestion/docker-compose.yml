@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  ingestion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: grant-ingestion-pipeline
+    environment:
+      - SAM_API_KEY=${SAM_API_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GRANTS_GOV_ATTRIBUTION=${GRANTS_GOV_ATTRIBUTION:-VTKL Grant Pipeline}
+      - POLLING_INTERVAL_MINUTES=${POLLING_INTERVAL_MINUTES:-60}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
