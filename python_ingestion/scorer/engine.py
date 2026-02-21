@@ -38,7 +38,7 @@ def score_opportunity(
     """
     
     # Score each dimension
-    mission_fit = _score_mission_fit(opportunity)
+    mission_fit = _score_mission_fit(opportunity, eligibility)
     eligibility_score = _score_eligibility(eligibility, opportunity)
     technical_alignment = _score_technical_alignment(opportunity)
     financial_viability = _score_financial_viability(opportunity)
@@ -64,9 +64,9 @@ def score_opportunity(
             for b in eligibility.blockers
         )
         
-        if has_certification_blocker or has_entity_or_security_blocker:
-            # Apply 80% penalty to mission fit and technical alignment
-            # These opportunities are completely inaccessible
+        if has_certification_blocker:
+            # Apply severe 80% penalty to mission fit and technical alignment
+            # Certification blockers (8(a), HUBZone) are completely inaccessible
             mission_fit = DimensionScore(
                 score=mission_fit.score * 0.2,
                 evidence_citations=mission_fit.evidence_citations
@@ -78,6 +78,33 @@ def score_opportunity(
             strategic_value = DimensionScore(
                 score=strategic_value.score * 0.1,
                 evidence_citations=strategic_value.evidence_citations
+            )
+            # CRITICAL FIX: Also penalize financial viability for certification blockers
+            # If we can't pursue it, the financial fit is irrelevant
+            financial_viability = DimensionScore(
+                score=financial_viability.score * 0.05,
+                evidence_citations=financial_viability.evidence_citations
+            )
+        elif has_entity_or_security_blocker:
+            # CALIBRATION FIX: Entity/security blockers are serious but less severe than certification
+            # Apply 50% penalty to mission/technical, 90% to strategic, 60% to financial
+            # These opportunities have technical merit but we can't access them
+            mission_fit = DimensionScore(
+                score=mission_fit.score * 0.50,
+                evidence_citations=mission_fit.evidence_citations
+            )
+            technical_alignment = DimensionScore(
+                score=technical_alignment.score * 0.50,
+                evidence_citations=technical_alignment.evidence_citations
+            )
+            strategic_value = DimensionScore(
+                score=strategic_value.score * 0.10,
+                evidence_citations=strategic_value.evidence_citations
+            )
+            # Moderate financial penalty (60%) - award size still somewhat relevant
+            financial_viability = DimensionScore(
+                score=financial_viability.score * 0.60,
+                evidence_citations=financial_viability.evidence_citations
             )
         elif has_naics_blocker:
             # NAICS mismatch is serious - apply 50% penalty
@@ -117,7 +144,7 @@ def score_opportunity(
     )
 
 
-def _score_mission_fit(opportunity: GrantOpportunity) -> DimensionScore:
+def _score_mission_fit(opportunity: GrantOpportunity, eligibility: EligibilityResult = None) -> DimensionScore:
     """Score alignment with VTKL's mission and core capabilities.
     
     VTKL focus areas:
@@ -166,11 +193,21 @@ def _score_mission_fit(opportunity: GrantOpportunity) -> DimensionScore:
     elif num_matched <= 4:
         score = 75.0  # Good alignment
     else:
-        score = 95.0  # Excellent alignment
+        score = 90.0  # Excellent alignment (CALIBRATED: was 95)
     
-    # Boost for explicit mission-critical terms
+    # CALIBRATION FIX: Boost for explicit mission-critical terms
+    # AI/ML boost reduced from +10 to +5 to prevent overshooting on strong matches
     if any(term in text_lower for term in ["ai", "artificial intelligence", "machine learning"]):
-        score = min(100.0, score + 10.0)
+        score = min(100.0, score + 5.0)
+    
+    # Additional boost for data governance (core VTKL capability)
+    if "data governance" in text_lower:
+        score = min(100.0, score + 5.0)
+    
+    # CALIBRATION FIX: Boost for favorable assets (NHO) that align with VTKL's strategic position
+    if eligibility and eligibility.assets:
+        if any("NHO" in asset or "Native Hawaiian" in asset for asset in eligibility.assets):
+            score = min(100.0, score + 15.0)
     
     if not evidence_citations:
         evidence_citations = [opportunity.title or "No specific evidence found"]
@@ -330,7 +367,9 @@ def _score_financial_viability(opportunity: GrantOpportunity) -> DimensionScore:
         score = 20.0
         reason = f"Award too small (${avg_award:,.0f} < ${min_capacity:,.0f} capacity)"
     elif avg_award > max_capacity:
-        score = 10.0
+        # CALIBRATION FIX: Less harsh penalty for oversized awards (was 10, now 20)
+        # Still a significant signal but not as extreme
+        score = 20.0
         reason = f"Award exceeds capacity (${avg_award:,.0f} > ${max_capacity:,.0f} max)"
     elif preferred_min <= avg_award <= preferred_max:
         score = 100.0
