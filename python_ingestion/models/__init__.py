@@ -5,6 +5,7 @@ from .eligibility_result import EligibilityResult
 from .scoring_result import ScoringResult
 from .verdict_report import VerdictReport
 from .teaming_partner import TeamingPartner
+from .timeline_plan import TimelinePlan, Milestone
 from .outcome_record import OutcomeRecord
 
 __all__ = [
@@ -13,5 +14,7 @@ __all__ = [
     "ScoringResult",
     "VerdictReport",
     "TeamingPartner",
+    "TimelinePlan",
+    "Milestone",
     "OutcomeRecord",
 ]

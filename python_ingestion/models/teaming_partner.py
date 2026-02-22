@@ -1,5 +1,6 @@
 """TeamingPartner - Output model for REQ-7 (Teaming Partner Intelligence Module)."""
 
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
