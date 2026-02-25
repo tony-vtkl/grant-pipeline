@@ -1,5 +1,11 @@
 """Pytest configuration and fixtures."""
 
+import sys
+from pathlib import Path
+
+# Ensure python_ingestion is importable as a package
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 import pytest
 
 

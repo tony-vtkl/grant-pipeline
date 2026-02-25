@@ -59,17 +59,16 @@ async def poll_all_sources():
             SbirGovAdapter(),
         ]
         
-        # Fetch from all sources
+        # Fetch from all sources (partial failure isolation via safe_fetch)
         all_opportunities = []
         for adapter in adapters:
-            try:
-                logger.info(f"Fetching from {adapter.source_name}...")
-                opportunities = await adapter.fetch_opportunities()
+            logger.info(f"Fetching from {adapter.source_name}...")
+            opportunities = await adapter.safe_fetch()
+            if opportunities:
                 logger.info(f"✓ {adapter.source_name}: {len(opportunities)} opportunities")
-                all_opportunities.extend(opportunities)
-            except Exception as e:
-                logger.error(f"✗ {adapter.source_name} failed: {e}", exc_info=True)
-                # Continue with other sources
+            else:
+                logger.warning(f"⚠ {adapter.source_name}: 0 opportunities (may have failed)")
+            all_opportunities.extend(opportunities)
         
         logger.info(f"Total opportunities fetched: {len(all_opportunities)}")
         
