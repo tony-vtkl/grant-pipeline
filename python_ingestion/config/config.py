@@ -21,6 +21,7 @@ class Config(BaseSettings):
     
     # Optional
     anthropic_api_key: Optional[str] = None  # For future REQs
+    partner_config_path: Optional[str] = None  # VTK-94: JSON file for partner fallback
     grants_gov_attribution: str = "VTKL Grant Pipeline"
     
     # Polling schedule (minutes)
