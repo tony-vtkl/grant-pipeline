@@ -2,7 +2,7 @@
 
 import logging
 from typing import List, Set
-from ..models import GrantOpportunity
+from models import GrantOpportunity
 
 logger = logging.getLogger(__name__)
 

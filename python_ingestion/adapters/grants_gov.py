@@ -7,7 +7,7 @@ from typing import List, Optional
 import httpx
 
 from .base import BaseAdapter
-from ..models import GrantOpportunity
+from models import GrantOpportunity
 
 logger = logging.getLogger(__name__)
 
