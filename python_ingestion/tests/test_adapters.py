@@ -59,7 +59,7 @@ async def test_grants_gov_adapter_returns_opportunities():
     # Verify first opportunity
     opp = opportunities[0]
     assert opp.source == "grants_gov"
-    assert opp.source_opportunity_id == "GRANTS-001"
+    assert opp.source_opportunity_id == "HHS-2024-001"
     assert opp.title == "AI for Healthcare"
     assert opp.agency == "Health and Human Services"
     assert opp.dedup_hash is not None
