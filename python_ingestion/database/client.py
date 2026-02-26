@@ -3,7 +3,7 @@
 import logging
 from typing import List, Set
 from supabase import create_client, Client
-from ..models import GrantOpportunity
+from models import GrantOpportunity
 
 logger = logging.getLogger(__name__)
 

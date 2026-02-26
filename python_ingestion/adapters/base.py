@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from typing import List
-from ..models import GrantOpportunity
+from models import GrantOpportunity
 
 
 class BaseAdapter(ABC):
