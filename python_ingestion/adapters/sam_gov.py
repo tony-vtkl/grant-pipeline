@@ -2,14 +2,18 @@
 
 import hashlib
 import logging
+import time
 from datetime import datetime
 from typing import List, Optional
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from .base import BaseAdapter
 from models import GrantOpportunity
 
 logger = logging.getLogger(__name__)
+
+TIMEOUT = httpx.Timeout(60.0, connect=30.0)
 
 
 class SamGovAdapter(BaseAdapter):
@@ -38,8 +42,26 @@ class SamGovAdapter(BaseAdapter):
         
         Per INTAKE BLOCK 1: authenticated API with provided key.
         Returns ≥1 GrantOpportunity record against live API in acceptance test.
+        Returns empty list on failure for partial failure isolation.
         """
         logger.info(f"Fetching opportunities from {self.source_name}")
+        try:
+            return await self._fetch_with_retry()
+        except Exception as e:
+            logger.error(f"[{self.source_name}] All retries exhausted: {e}")
+            return []
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def _fetch_with_retry(self) -> List[GrantOpportunity]:
+        """Internal fetch method with retry logic."""
+        url = self.API_URL
+        start = time.monotonic()
+        status_code = None
         
         params = {
             "api_key": self.api_key,
@@ -49,13 +71,20 @@ class SamGovAdapter(BaseAdapter):
         }
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
                 response = await client.get(
-                    self.API_URL,
+                    url,
                     params=params
                 )
+                status_code = response.status_code
                 response.raise_for_status()
                 data = response.json()
+            
+            duration = time.monotonic() - start
+            logger.info(
+                f"[{self.source_name}] url={url} status={status_code} "
+                f"duration={duration:.2f}s result=success"
+            )
             
             opportunities = []
             total_records = data.get("totalRecords", 0)
@@ -69,12 +98,27 @@ class SamGovAdapter(BaseAdapter):
             logger.info(f"Normalized {len(opportunities)} opportunities from {self.source_name}")
             return opportunities
             
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error fetching from {self.source_name}: {e}")
-            return []
+        except httpx.TimeoutException as e:
+            duration = time.monotonic() - start
+            logger.error(
+                f"[{self.source_name}] url={url} status=timeout "
+                f"duration={duration:.2f}s result=failure error='{e}'"
+            )
+            raise
+        except httpx.HTTPStatusError as e:
+            duration = time.monotonic() - start
+            logger.error(
+                f"[{self.source_name}] url={url} status={status_code} "
+                f"duration={duration:.2f}s result=failure error='{e}'"
+            )
+            raise
         except Exception as e:
-            logger.error(f"Error fetching from {self.source_name}: {e}")
-            return []
+            duration = time.monotonic() - start
+            logger.error(
+                f"[{self.source_name}] url={url} status={status_code} "
+                f"duration={duration:.2f}s result=failure error='{e}'"
+            )
+            raise
     
     def _normalize_opportunity(self, data: dict) -> Optional[GrantOpportunity]:
         """Normalize SAM.gov response to GrantOpportunity model.
