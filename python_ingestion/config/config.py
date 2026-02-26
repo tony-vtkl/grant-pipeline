@@ -20,6 +20,7 @@ class Config(BaseSettings):
     supabase_url: str
     supabase_key: str
     sam_api_key: str
+    database_url: str = ""
     grants_gov_attribution: str = "VTKL Grant Pipeline"
 
     # Optional
