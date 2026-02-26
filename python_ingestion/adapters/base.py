@@ -2,14 +2,7 @@
 
 from abc import ABC, abstractmethod
 from typing import List
-<<<<<<< HEAD
-try:
-    from ..models import GrantOpportunity
-except ImportError:
-    from models import GrantOpportunity
-=======
 from models import GrantOpportunity
->>>>>>> origin/main
 
 
 class BaseAdapter(ABC):
