@@ -18,6 +18,8 @@ class Config(BaseSettings):
     # Required
     sam_api_key: str
     database_url: str
+    supabase_url: str = ""       # Supabase project URL (REQ-4)
+    supabase_key: str = ""       # Supabase anon/service key (REQ-4)
     
     # Optional
     anthropic_api_key: Optional[str] = None  # For future REQs
