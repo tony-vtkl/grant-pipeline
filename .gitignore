@@ -1,1 +1,5 @@
 *.pyc
+
+# Environment files
+.env
+.env.local
