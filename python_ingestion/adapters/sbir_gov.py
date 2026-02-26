@@ -9,10 +9,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from .base import BaseAdapter
-try:
-    from ..models import GrantOpportunity
-except ImportError:
-    from models import GrantOpportunity
+from models import GrantOpportunity
 
 logger = logging.getLogger(__name__)
 
