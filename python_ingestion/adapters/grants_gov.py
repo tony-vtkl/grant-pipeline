@@ -25,7 +25,7 @@ class GrantsGovAdapter(BaseAdapter):
     Per INTAKE BLOCK 1 acceptance criteria: requests must include attribution header per ToS.
     """
     
-    API_URL = "https://www.grants.gov/web/grants/search-grants.html/v1/api/search2"
+    API_URL = "https://api.grants.gov/v1/api/search2"
     
     def __init__(self, attribution_header: str = "VTKL Grant Pipeline"):
         """Initialize adapter.
@@ -97,10 +97,12 @@ class GrantsGovAdapter(BaseAdapter):
             )
             
             opportunities = []
-            hit_count = data.get("hitCount", 0)
+            # API wraps results in a "data" envelope
+            inner = data.get("data", data)
+            hit_count = inner.get("hitCount", 0)
             logger.info(f"Grants.gov returned {hit_count} opportunities")
             
-            for opp_data in data.get("oppHits", []):
+            for opp_data in inner.get("oppHits", []):
                 opportunity = self._normalize_opportunity(opp_data)
                 if opportunity:
                     opportunities.append(opportunity)
