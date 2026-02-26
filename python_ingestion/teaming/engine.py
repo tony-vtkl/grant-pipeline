@@ -12,13 +12,11 @@ Source: BRD Section 3C, Section 5
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from models.grant_opportunity import GrantOpportunity
 from models.scoring_result import ScoringResult
 from models.teaming_partner import TeamingPartner
-from teaming.hardcoded_partners import get_matching_partners
-from teaming.usaspending_lookup import lookup_partners_by_naics_and_agency
+from teaming.hardcoded_partners import PartnerSourceError, get_matching_partners
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +27,23 @@ ACTIONABLE_VERDICTS = {"GO", "SHAPE"}
 def generate_teaming_suggestions(
     opportunity: GrantOpportunity,
     scoring_result: ScoringResult,
-    skip_usaspending: bool = False,
 ) -> list[TeamingPartner]:
     """Generate teaming partner suggestions for an opportunity.
 
     Only produces suggestions for GO and SHAPE verdicts.
     MONITOR and NO-GO are skipped with a log message.
 
+    Uses USASpending API as primary source with config file fallback.
+
     Args:
         opportunity: The grant opportunity.
         scoring_result: The scoring result with verdict.
-        skip_usaspending: If True, skip live API call (for testing).
 
     Returns:
         List of TeamingPartner suggestions. Empty for non-actionable verdicts.
+
+    Raises:
+        PartnerSourceError: If no partner data source is available.
     """
     if scoring_result.verdict not in ACTIONABLE_VERDICTS:
         logger.info(
@@ -54,45 +55,35 @@ def generate_teaming_suggestions(
 
     partners: list[TeamingPartner] = []
 
-    # 1. Hardcoded partner lookup (BRD seed data)
-    seed_matches = get_matching_partners(
-        agency=opportunity.agency,
-        opportunity_type=opportunity.opportunity_type,
-    )
-    for seed in seed_matches:
-        partners.append(
-            TeamingPartner(
-                opportunity_id=opportunity.source_opportunity_id,
-                partner_name=seed.name,
-                partner_role=seed.role,
-                rationale=seed.rationale,
-                source="hardcoded",
-            )
+    try:
+        matched = get_matching_partners(
+            agency=opportunity.agency,
+            opportunity_type=opportunity.opportunity_type,
+            naics_codes=opportunity.naics_codes or None,
         )
-
-    # 2. USAspending.gov enrichment
-    if not skip_usaspending:
-        try:
-            usa_partners = lookup_partners_by_naics_and_agency(
-                agency=opportunity.agency,
-                naics_codes=opportunity.naics_codes or None,
-            )
-            for usa in usa_partners:
-                # Don't duplicate names already from seed data
-                if any(p.partner_name.upper() == usa.name.upper() for p in partners):
-                    continue
-                partners.append(
-                    TeamingPartner(
-                        opportunity_id=opportunity.source_opportunity_id,
-                        partner_name=usa.name,
-                        partner_role="Potential Teaming Partner",
-                        rationale=f"Past awardee in NAICS {', '.join(usa.naics_codes)} with {usa.agency}",
-                        source="usaspending",
-                        naics_codes=usa.naics_codes,
-                        past_agency_work=f"Prior awards from {usa.agency}",
-                    )
+        for p in matched:
+            source = "usaspending" if p.award_count > 0 else "config"
+            partners.append(
+                TeamingPartner(
+                    opportunity_id=opportunity.source_opportunity_id,
+                    partner_name=p.name,
+                    partner_role="Potential Teaming Partner",
+                    rationale=(
+                        f"Past awardee in NAICS {', '.join(p.naics_codes)} with {p.agency}"
+                        if p.naics_codes
+                        else f"Config-sourced partner for {p.agency}"
+                    ),
+                    source=source,
+                    naics_codes=p.naics_codes,
+                    past_agency_work=f"Prior awards from {p.agency}" if p.award_count > 0 else None,
                 )
-        except Exception as exc:
-            logger.warning("USAspending lookup failed for %s: %s", opportunity.source_opportunity_id, exc)
+            )
+    except PartnerSourceError:
+        logger.warning(
+            "No partner source available for %s (agency=%s)",
+            opportunity.source_opportunity_id,
+            opportunity.agency,
+        )
+        raise
 
     return partners
