@@ -81,7 +81,7 @@ def build_blocks(grants: list[dict], total: int) -> list[dict]:
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f"🔔 {n} novas grants descobertas — {today}",
+                "text": f"🔔 {n} New Grants Discovered — {today}",
                 "emoji": True,
             },
         },
@@ -110,7 +110,7 @@ def build_blocks(grants: list[dict], total: int) -> list[dict]:
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": f"Total no DB: *{total}* | Fontes: Grants.gov, SAM.gov",
+                    "text": f"Total in DB: *{total}* | Sources: Grants.gov, SAM.gov",
                 }
             ],
         }
@@ -157,7 +157,7 @@ def post_to_slack(blocks: list[dict]) -> None:
 def main():
     grants, total = fetch_new_grants()
     if not grants:
-        print("No new grants in the last 24h. Skipping.")
+        print("No new grants in the last 24h. Nothing to post.")
         return
 
     blocks = build_blocks(grants, total)
