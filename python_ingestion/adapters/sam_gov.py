@@ -23,7 +23,7 @@ class SamGovAdapter(BaseAdapter):
     Requires API key: SAM-4bd94da0-aa58-4422-a387-93f954c86e40 (per INTAKE BLOCK 1)
     """
     
-    API_URL = "https://api.sam.gov/opportunities/v2/search"
+    API_URL = "https://api.sam.gov/prod/opportunities/v2/search"
     
     def __init__(self, api_key: str):
         """Initialize adapter.
@@ -66,7 +66,7 @@ class SamGovAdapter(BaseAdapter):
         params = {
             "api_key": self.api_key,
             "postedFrom": self._get_recent_date(),  # Last 30 days
-            "ptype": "o,g",  # Opportunities and Grants
+            "postedTo": datetime.utcnow().strftime("%m/%d/%Y"),
             "limit": 100,
         }
         
