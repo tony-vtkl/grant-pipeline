@@ -1,0 +1,31 @@
+{
+  "totalRecords": 2,
+  "opportunitiesData": [
+    {
+      "noticeId": "sam-int-001",
+      "solicitationNumber": "W911NF-26-R-0055",
+      "title": "AI/ML Decision Support for Army Operations",
+      "organizationName": "Army Research Laboratory",
+      "fullParentPathName": "DEPT OF DEFENSE > DEPT OF THE ARMY > ARMY RESEARCH LAB",
+      "postedDate": "01/10/2026",
+      "responseDeadLine": null,
+      "naicsCode": ["541511", "541512"],
+      "typeOfSetAsideDescription": "Total Small Business Set-Aside",
+      "type": "Solicitation",
+      "description": "Seeking AI and machine learning decision support capabilities for defense operations. Workflow automation and agent configuration required."
+    },
+    {
+      "noticeId": "sam-int-002",
+      "solicitationNumber": "SBA-8A-26-0001",
+      "title": "8(a) Program IT Modernization",
+      "organizationName": "Small Business Administration",
+      "fullParentPathName": "SBA",
+      "postedDate": "02/01/2026",
+      "responseDeadLine": null,
+      "naicsCode": ["541511"],
+      "typeOfSetAsideDescription": "8(a) Set-Aside",
+      "type": "Solicitation",
+      "description": "8(a) only opportunity. Must be 8(a) certified. Requires 8(a) certification at time of proposal. IT modernization services."
+    }
+  ]
+}

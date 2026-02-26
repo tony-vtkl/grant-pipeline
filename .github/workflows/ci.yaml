@@ -76,19 +76,25 @@ jobs:
           if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
           if [[ -f requirements-dev.txt ]]; then pip install -r requirements-dev.txt; fi
           pip install pytest pytest-cov
-      - name: Run tests
+      - name: Run unit tests
         run: |
           pytest tests/ -v --tb=short --junitxml=test-results.xml 2>&1 || true
           # Also check for tests in subdirectories
-          find . -path "*/tests/test_*.py" -not -path "./tests/*" -exec dirname {} \; | sort -u | while read dir; do
+          find . -path "*/tests/test_*.py" -not -path "./tests/*" -not -path "*/tests/integration/*" -exec dirname {} \; | sort -u | while read dir; do
             echo "Running tests in $dir..."
             (cd "$(dirname "$dir")" && pytest "$(basename "$dir")/" -v --tb=short 2>&1) || true
           done
+      - name: Run integration tests
+        working-directory: python_ingestion
+        run: |
+          python -m pytest tests/integration/ -v --tb=short --junitxml=integration-test-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-python
-          path: test-results.xml
+          path: |
+            test-results.xml
+            python_ingestion/integration-test-results.xml
 
   test-node:
     name: Node Tests
