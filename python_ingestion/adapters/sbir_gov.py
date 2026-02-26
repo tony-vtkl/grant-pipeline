@@ -78,21 +78,21 @@ class SbirGovAdapter(BaseAdapter):
                 f"[{self.source_name}] url={url} status=timeout "
                 f"duration={duration:.2f}s result=failure error='{e}'"
             )
-            raise
+            return []
         except httpx.HTTPStatusError as e:
             duration = time.monotonic() - start
             logger.error(
                 f"[{self.source_name}] url={url} status={status_code} "
                 f"duration={duration:.2f}s result=failure error='{e}'"
             )
-            raise
+            return []
         except Exception as e:
             duration = time.monotonic() - start
             logger.error(
                 f"[{self.source_name}] url={url} status={status_code} "
                 f"duration={duration:.2f}s result=failure error='{e}'"
             )
-            raise
+            return []
 
     def _normalize_opportunity(self, data: dict) -> Optional[GrantOpportunity]:
         try:

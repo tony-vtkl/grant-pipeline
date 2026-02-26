@@ -81,10 +81,10 @@ class GrantsGovAdapter(BaseAdapter):
             
         except httpx.HTTPError as e:
             logger.error(f"HTTP error fetching from {self.source_name}: {e}")
-            raise
+            return []
         except Exception as e:
             logger.error(f"Error fetching from {self.source_name}: {e}")
-            raise
+            return []
     
     def _normalize_opportunity(self, data: dict) -> Optional[GrantOpportunity]:
         """Normalize Grants.gov response to GrantOpportunity model.
