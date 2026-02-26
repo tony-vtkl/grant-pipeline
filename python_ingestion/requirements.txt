@@ -12,3 +12,4 @@ respx>=0.21,<1
 
 # Code quality
 ruff>=0.3,<1
+pyyaml>=6.0,<7
