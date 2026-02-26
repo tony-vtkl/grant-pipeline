@@ -1,0 +1,38 @@
+{
+  "hitCount": 3,
+  "oppHits": [
+    {
+      "id": "356001",
+      "number": "HHS-2026-ACF-OCS-TE-0042",
+      "title": "Community AI Workforce Development Grant",
+      "agencyName": "Department of Health and Human Services",
+      "openDate": "01/15/2026",
+      "closeDate": null,
+      "synopsis": "Grant program for AI workforce development and data governance training in underserved communities. Machine learning, workflow automation, and decision support systems.",
+      "awardCeiling": 1500000,
+      "awardFloor": 500000
+    },
+    {
+      "id": "356002",
+      "number": "DOE-2026-CESER-0011",
+      "title": "Energy Grid Cybersecurity Monitoring Platform",
+      "agencyName": "Department of Energy",
+      "openDate": "02/01/2026",
+      "closeDate": null,
+      "synopsis": "Development of cybersecurity monitoring and analytics platform for energy infrastructure. Requires cloud computing, data pipeline development, and real-time anomaly detection.",
+      "awardCeiling": 2000000,
+      "awardFloor": 800000
+    },
+    {
+      "id": "356003",
+      "number": "NSF-2026-CISE-0003",
+      "title": "Non-profit only: Academic Research Data Infrastructure",
+      "agencyName": "National Science Foundation",
+      "openDate": "01/20/2026",
+      "closeDate": null,
+      "synopsis": "Non-profit only research data infrastructure. University only eligible. R1 institution required for this academic computing grant.",
+      "awardCeiling": 5000000,
+      "awardFloor": 2000000
+    }
+  ]
+}

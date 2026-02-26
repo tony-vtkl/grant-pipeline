@@ -1,0 +1,28 @@
+[
+  {
+    "solicitation_number": "N261-001",
+    "solicitation_id": "98765",
+    "topic_title": "AI-Powered Naval Decision Automation",
+    "agency": "Navy",
+    "agency_name": "Department of the Navy",
+    "open_date": "2026-01-25",
+    "close_date": null,
+    "description": "Phase II SBIR for AI decision automation in naval combat systems. Machine learning, data pipeline, workflow orchestration required.",
+    "award_amount_max": 1500000,
+    "naics": "541511,541512",
+    "solicitation_url": "https://www.sbir.gov/sbirsearch/detail/98765"
+  },
+  {
+    "solicitation_number": "AF261-002",
+    "solicitation_id": "98766",
+    "topic_title": "Autonomous Drone Swarm Coordination",
+    "agency": "Air Force",
+    "agency_name": "Department of the Air Force",
+    "open_date": "2026-02-10",
+    "close_date": null,
+    "description": "Phase I SBIR for drone swarm coordination. Requires real-time coordination, edge computing, and autonomy. Top Secret clearance required. IL6 security posture.",
+    "award_amount_max": 250000,
+    "naics": "541511",
+    "solicitation_url": "https://www.sbir.gov/sbirsearch/detail/98766"
+  }
+]
