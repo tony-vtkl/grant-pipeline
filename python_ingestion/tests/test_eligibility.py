@@ -236,6 +236,26 @@ def test_all_constraints_checked():
     assert result.certification_check is not None
 
 
+def test_nsf_eligible_as_subawardee():
+    """Test that NSF opportunities route to subawardee path."""
+    from datetime import timezone
+    opp = GrantOpportunity(
+        source="grants_gov",
+        source_opportunity_id="NSF-TEST-001",
+        dedup_hash="nsf_test_hash",
+        title="NSF Computer Science Research Grant",
+        agency="National Science Foundation",
+        response_deadline=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        source_url="https://nsf.gov/test",
+        naics_codes=["541511"],
+    )
+
+    result = assess_eligibility(opp)
+
+    assert result.is_eligible is True
+    assert result.participation_path == "subawardee"
+
+
 def test_eligibility_result_model_valid():
     """Test that EligibilityResult model is properly populated."""
     opp = GrantOpportunity(
