@@ -1,13 +1,21 @@
 """Hard eligibility filter for VTKL grant opportunities.
 
-Implements six constraint checks as defined in VTK-66 contract.
+Implements six constraint checks as defined in VTK-66 / VTK-104 contracts.
+Persists results to eligibility_results table and updates grant status to 'assessed'.
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from models.grant_opportunity import GrantOpportunity
 from models.eligibility_result import EligibilityResult, ConstraintCheck
 from .vtkl_profile import VTKL_PROFILE
+
+logger = logging.getLogger(__name__)
+
+# Agencies where VTKL typically participates as subawardee (not prime)
+SUB_ONLY_AGENCIES = {"NSF", "NIH", "DOE-SC"}
+
 
 
 def assess_eligibility(opportunity: GrantOpportunity) -> EligibilityResult:
@@ -421,6 +429,22 @@ def _determine_participation_path(
     if not is_eligible:
         return None
     
+    # Check if agency typically requires sub participation for industry
+    agency = (opportunity.agency or "").strip().upper()
+    agency_short = agency.split()[0] if agency else ""
+    if agency_short in SUB_ONLY_AGENCIES or agency in SUB_ONLY_AGENCIES:
+        return "subawardee"
+    
+    # Also check for keywords indicating sub-only
+    text = (opportunity.description or "") + " " + (opportunity.raw_text or "")
+    text_lower = text.lower()
+    if any(term in text_lower for term in [
+        "subaward only", "subcontract only", "teaming required",
+        "prime must be university", "prime must be academic",
+        "industry partner", "industry subcontractor"
+    ]):
+        return "subawardee"
+    
     # If all checks pass including NAICS, likely prime candidate
     if naics_match and cert_check:
         return "prime"
@@ -431,3 +455,80 @@ def _determine_participation_path(
     
     # Default: eligible but path unclear
     return None
+
+
+# ---------------------------------------------------------------------------
+# DB persistence: write EligibilityResult and update grant status
+# ---------------------------------------------------------------------------
+
+def persist_result(result: EligibilityResult, *, supabase_client=None) -> None:
+    """Write EligibilityResult to eligibility_results table and mark grant as assessed.
+
+    Args:
+        result: The eligibility assessment result to persist.
+        supabase_client: A Supabase ``Client`` instance.  If *None*, the
+            function is a no-op (useful in tests / dry-run mode).
+    """
+    if supabase_client is None:
+        logger.warning("persist_result called without supabase_client — skipping DB write")
+        return
+
+    payload = {
+        "opportunity_id": result.opportunity_id,
+        "is_eligible": result.is_eligible,
+        "participation_path": result.participation_path,
+        "entity_type_check": result.entity_type_check.model_dump(),
+        "location_check": result.location_check.model_dump(),
+        "sam_active_check": result.sam_active_check.model_dump(),
+        "naics_match_check": result.naics_match_check.model_dump(),
+        "security_posture_check": result.security_posture_check.model_dump(),
+        "certification_check": result.certification_check.model_dump(),
+        "blockers": result.blockers,
+        "assets": result.assets,
+        "warnings": result.warnings,
+        "evaluated_at": result.evaluated_at.isoformat(),
+        "vtkl_profile_version": result.vtkl_profile_version,
+    }
+
+    # Upsert into eligibility_results (idempotent on opportunity_id)
+    supabase_client.table("eligibility_results").upsert(
+        payload, on_conflict="opportunity_id"
+    ).execute()
+    logger.info("Persisted eligibility result for %s", result.opportunity_id)
+
+    # Update grant status from 'new' → 'assessed'
+    supabase_client.table("grant_opportunities").update(
+        {"status": "assessed"}
+    ).eq(
+        "source_opportunity_id", result.opportunity_id
+    ).execute()
+    logger.info("Updated grant %s status to 'assessed'", result.opportunity_id)
+
+
+def run_eligibility_batch(*, supabase_client=None) -> list[EligibilityResult]:
+    """Assess all grants with status='new' and persist results.
+
+    Returns:
+        List of EligibilityResult objects produced.
+    """
+    if supabase_client is None:
+        logger.error("run_eligibility_batch requires a supabase_client")
+        return []
+
+    resp = (
+        supabase_client.table("grant_opportunities")
+        .select("*")
+        .eq("status", "new")
+        .execute()
+    )
+    rows = resp.data or []
+    logger.info("Found %d grants with status='new'", len(rows))
+
+    results: list[EligibilityResult] = []
+    for row in rows:
+        opp = GrantOpportunity(**row)
+        result = assess_eligibility(opp)
+        persist_result(result, supabase_client=supabase_client)
+        results.append(result)
+
+    return results

@@ -1,11 +1,13 @@
 """Unit tests for eligibility assessment engine."""
 
+import os
 import pytest
 import json
 from pathlib import Path
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 from models.grant_opportunity import GrantOpportunity
-from eligibility import assess_eligibility, VTKL_PROFILE
+from eligibility import assess_eligibility, persist_result, VTKL_PROFILE
 
 
 @pytest.fixture
@@ -255,3 +257,80 @@ def test_eligibility_result_model_valid():
     assert isinstance(result.warnings, list)
     assert result.vtkl_profile_version == "1.0"
     assert isinstance(result.evaluated_at, datetime)
+
+
+# --- VTK-104 additions ---
+
+def test_nsf_routes_to_subawardee():
+    """Test that NSF opportunities route to subawardee path."""
+    from datetime import timezone
+    opp = GrantOpportunity(
+        source="grants_gov",
+        source_opportunity_id="TEST-NSF-001",
+        dedup_hash="nsf123",
+        title="NSF AI Research Grant",
+        agency="NSF",
+        source_url="https://nsf.gov/test",
+        naics_codes=["541511"],
+    )
+    result = assess_eligibility(opp)
+    assert result.is_eligible is True
+    assert result.participation_path == "subawardee"
+
+
+def test_env_var_overrides_profile():
+    """Test that VTKL_ env vars override default profile values."""
+    with patch.dict(os.environ, {
+        "VTKL_STATE": "CA",
+        "VTKL_NAICS_PRIMARY": "541511,999999",
+        "VTKL_CERT_8A": "true",
+        "VTKL_MAX_AWARD": "10000000",
+    }):
+        from eligibility.vtkl_profile import _build_profile
+        profile = _build_profile()
+        assert profile["location"]["state"] == "CA"
+        assert "999999" in profile["naics_primary"]
+        assert profile["certifications"]["8(a)"] is True
+        assert profile["financial_capacity"]["max_award"] == 10_000_000
+
+
+def test_persist_result_writes_and_updates_status():
+    """Test that persist_result upserts result and updates grant status."""
+    from datetime import timezone
+    opp = GrantOpportunity(
+        source="sam_gov",
+        source_opportunity_id="TEST-PERSIST-001",
+        dedup_hash="persist123",
+        title="Persist Test",
+        agency="Test Agency",
+        source_url="https://test.gov",
+        naics_codes=["541511"],
+    )
+    result = assess_eligibility(opp)
+
+    mock_client = MagicMock()
+    # Chain: table().upsert().execute() / table().update().eq().execute()
+    mock_table = MagicMock()
+    mock_client.table.return_value = mock_table
+    mock_table.upsert.return_value = mock_table
+    mock_table.update.return_value = mock_table
+    mock_table.eq.return_value = mock_table
+
+    persist_result(result, supabase_client=mock_client)
+
+    # Should have called table("eligibility_results") for upsert
+    calls = [c[0][0] for c in mock_client.table.call_args_list]
+    assert "eligibility_results" in calls
+    assert "grant_opportunities" in calls
+
+    # Should have called update with status="assessed"
+    mock_table.update.assert_called_once_with({"status": "assessed"})
+
+
+def test_nho_asset_detected(test_opportunities):
+    """Test NHO asset detection in eligible NHO set-aside opportunity."""
+    test_case = next(tc for tc in test_opportunities if tc["id"] == "GO-002")
+    opp = GrantOpportunity(**test_case["opportunity"])
+    result = assess_eligibility(opp)
+    assert result.is_eligible is True
+    assert any("NHO" in a for a in result.assets)
