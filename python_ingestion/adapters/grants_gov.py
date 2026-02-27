@@ -175,7 +175,7 @@ class GrantsGovAdapter(BaseAdapter):
                 opportunity_type="Grant",
                 description=data.get("synopsis", data.get("description")),
                 raw_text=data.get("synopsis", data.get("description")),
-                source_url=f"https://www.grants.gov/web/grants/view-opportunity.html?oppId={source_id}",
+                source_url=f"https://www.grants.gov/search-results-detail/{source_id}",
                 status="new",
                 sbir_program_active=False,  # Not SBIR source
             )
