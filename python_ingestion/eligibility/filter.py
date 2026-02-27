@@ -3,11 +3,14 @@
 Implements six constraint checks as defined in VTK-66 contract.
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from models.grant_opportunity import GrantOpportunity
 from models.eligibility_result import EligibilityResult, ConstraintCheck
 from .vtkl_profile import VTKL_PROFILE
+
+logger = logging.getLogger(__name__)
 
 
 def assess_eligibility(opportunity: GrantOpportunity) -> EligibilityResult:
@@ -421,6 +424,11 @@ def _determine_participation_path(
     if not is_eligible:
         return None
     
+    # NSF typically requires academic prime; industry participates as sub
+    agency = (opportunity.agency or "").lower()
+    if "nsf" in agency or "national science foundation" in agency:
+        return "subawardee"
+    
     # If all checks pass including NAICS, likely prime candidate
     if naics_match and cert_check:
         return "prime"
@@ -431,3 +439,45 @@ def _determine_participation_path(
     
     # Default: eligible but path unclear
     return None
+
+
+def run_eligibility_batch(db_client) -> dict:
+    """Orchestrate eligibility assessment for all grants with status='new'.
+
+    Fetches new grants, evaluates each against VTKL profile, persists results,
+    and updates grant status to 'assessed'.
+
+    Args:
+        db_client: SupabaseClient instance.
+
+    Returns:
+        Summary dict with counts of assessed, eligible, and ineligible grants.
+    """
+    grants = db_client.get_grants_by_status("new")
+    logger.info("Found %d grants with status='new' for eligibility assessment", len(grants))
+
+    assessed = 0
+    eligible = 0
+    ineligible = 0
+
+    for grant in grants:
+        try:
+            result = assess_eligibility(grant)
+            db_client.save_eligibility_result(result)
+            db_client.update_grant_status(grant.source_opportunity_id, "assessed")
+            assessed += 1
+            if result.is_eligible:
+                eligible += 1
+            else:
+                ineligible += 1
+        except Exception as e:
+            logger.error("Failed to assess grant %s: %s", grant.source_opportunity_id, e)
+
+    summary = {
+        "total_new": len(grants),
+        "assessed": assessed,
+        "eligible": eligible,
+        "ineligible": ineligible,
+    }
+    logger.info("Eligibility batch complete: %s", summary)
+    return summary
