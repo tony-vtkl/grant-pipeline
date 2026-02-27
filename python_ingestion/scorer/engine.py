@@ -1,28 +1,37 @@
-"""Weighted LLM-based scoring engine for grant opportunities.
+"""LLM-based scoring engine for grant opportunities using Anthropic Claude.
 
 Implements five-dimension scoring with evidence-based citations.
 """
 
+import json
+import os
 from datetime import datetime, timezone
-from typing import List, Tuple
+from typing import Optional
+
+import anthropic
+
 from models.grant_opportunity import GrantOpportunity
 from models.eligibility_result import EligibilityResult
 from models.scoring_result import ScoringResult, DimensionScore
 from .weights import DEFAULT_WEIGHTS, ScoringWeights
-from .semantic_map import find_semantic_matches, get_vtkl_focus_areas
+from .prompts import get_prompt_for_dimension
+
+
+# Model configuration
+DEFAULT_LLM_MODEL = "claude-haiku-4-5"
 
 
 def score_opportunity(
     opportunity: GrantOpportunity,
     eligibility: EligibilityResult,
     weights: ScoringWeights = DEFAULT_WEIGHTS,
-    llm_model: str = "rule-based-v1.0"
+    llm_model: str = DEFAULT_LLM_MODEL
 ) -> ScoringResult:
-    """Score grant opportunity across five weighted dimensions.
+    """Score grant opportunity across five weighted dimensions using LLM.
     
     Dimensions:
     1. Mission Fit (default 25%): Alignment with VTKL's core capabilities
-    2. Eligibility (default 25%): Based on eligibility assessment
+    2. Eligibility (default 25%): Based on eligibility assessment (auto-calculated)
     3. Technical Alignment (default 20%): Match to technical requirements
     4. Financial Viability (default 15%): Award size and financial fit
     5. Strategic Value (default 15%): Long-term relationship potential
@@ -31,91 +40,41 @@ def score_opportunity(
         opportunity: Grant opportunity to score
         eligibility: Eligibility assessment result
         weights: Scoring weights configuration
-        llm_model: Model identifier (for tracking)
+        llm_model: Anthropic model to use (default: claude-haiku-4-5)
         
     Returns:
         ScoringResult with dimension scores and composite score
     """
     
-    # Score each dimension
-    mission_fit = _score_mission_fit(opportunity, eligibility)
-    eligibility_score = _score_eligibility(eligibility, opportunity)
-    technical_alignment = _score_technical_alignment(opportunity)
-    financial_viability = _score_financial_viability(opportunity)
-    strategic_value = _score_strategic_value(opportunity)
+    # Prepare grant text for LLM
+    grant_text = _prepare_grant_text(opportunity)
     
-    # Apply penalty for hard blocker cases
-    # If eligibility is 0 due to hard blockers (8(a), HUBZone, entity type, security),
-    # significantly reduce other dimensions since opportunity is fundamentally inaccessible
+    # Initialize Anthropic client
+    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    
+    # Score eligibility dimension (auto-calculated, no LLM call)
+    eligibility_score = _score_eligibility(eligibility, opportunity)
+    
+    # Score other 4 dimensions via LLM (skip if ineligible to save API calls)
     if not eligibility.is_eligible:
-        # Check for different types of critical blockers
-        has_certification_blocker = any(
-            "8(a)" in b or "HUBZone" in b or "HARD BLOCKER" in b
-            for b in eligibility.blockers
-        )
+        # For ineligible opportunities, set eligibility score to 0 and skip LLM for efficiency
+        # Still call LLM for other dimensions but expect low scores
+        mission_fit = _score_dimension_with_llm(client, "mission_fit", grant_text, llm_model)
+        technical_alignment = _score_dimension_with_llm(client, "technical_alignment", grant_text, llm_model)
+        financial_viability = _score_dimension_with_llm(client, "financial_viability", grant_text, llm_model)
+        strategic_value = _score_dimension_with_llm(client, "strategic_value", grant_text, llm_model)
         
-        has_naics_blocker = any(
-            "NAICS" in b or "naics" in b.lower()
-            for b in eligibility.blockers
-        )
-        
-        has_entity_or_security_blocker = any(
-            "entity type" in b.lower() or "Top Secret" in b or "IL5" in b or "IL6" in b
-            for b in eligibility.blockers
-        )
-        
-        if has_certification_blocker:
-            # Apply severe 80% penalty to mission fit and technical alignment
-            # Certification blockers (8(a), HUBZone) are completely inaccessible
-            mission_fit = DimensionScore(
-                score=mission_fit.score * 0.2,
-                evidence_citations=mission_fit.evidence_citations
-            )
-            technical_alignment = DimensionScore(
-                score=technical_alignment.score * 0.2,
-                evidence_citations=technical_alignment.evidence_citations
-            )
-            strategic_value = DimensionScore(
-                score=strategic_value.score * 0.1,
-                evidence_citations=strategic_value.evidence_citations
-            )
-            # CRITICAL FIX: Also penalize financial viability for certification blockers
-            # If we can't pursue it, the financial fit is irrelevant
-            financial_viability = DimensionScore(
-                score=financial_viability.score * 0.05,
-                evidence_citations=financial_viability.evidence_citations
-            )
-        elif has_entity_or_security_blocker:
-            # CALIBRATION FIX: Entity/security blockers are serious but less severe than certification
-            # Apply 50% penalty to mission/technical, 90% to strategic, 60% to financial
-            # These opportunities have technical merit but we can't access them
-            mission_fit = DimensionScore(
-                score=mission_fit.score * 0.50,
-                evidence_citations=mission_fit.evidence_citations
-            )
-            technical_alignment = DimensionScore(
-                score=technical_alignment.score * 0.50,
-                evidence_citations=technical_alignment.evidence_citations
-            )
-            strategic_value = DimensionScore(
-                score=strategic_value.score * 0.10,
-                evidence_citations=strategic_value.evidence_citations
-            )
-            # Moderate financial penalty (60%) - award size still somewhat relevant
-            financial_viability = DimensionScore(
-                score=financial_viability.score * 0.60,
-                evidence_citations=financial_viability.evidence_citations
-            )
-        elif has_naics_blocker:
-            # NAICS mismatch is serious - apply 50% penalty
-            mission_fit = DimensionScore(
-                score=mission_fit.score * 0.5,
-                evidence_citations=mission_fit.evidence_citations
-            )
-            technical_alignment = DimensionScore(
-                score=technical_alignment.score * 0.4,
-                evidence_citations=technical_alignment.evidence_citations
-            )
+        # Apply penalty for ineligibility
+        mission_fit = _apply_ineligibility_penalty(mission_fit)
+        technical_alignment = _apply_ineligibility_penalty(technical_alignment)
+        financial_viability = _apply_ineligibility_penalty(financial_viability)
+        strategic_value = _apply_ineligibility_penalty(strategic_value)
+    else:
+        # Eligible - score all dimensions normally
+        mission_fit = _score_dimension_with_llm(client, "mission_fit", grant_text, llm_model)
+        technical_alignment = _score_dimension_with_llm(client, "technical_alignment", grant_text, llm_model)
+        financial_viability = _score_dimension_with_llm(client, "financial_viability", grant_text, llm_model)
+        strategic_value = _score_dimension_with_llm(client, "strategic_value", grant_text, llm_model)
     
     # Calculate weighted composite score
     composite_score = (
@@ -144,82 +103,109 @@ def score_opportunity(
     )
 
 
-def _score_mission_fit(opportunity: GrantOpportunity, eligibility: EligibilityResult = None) -> DimensionScore:
-    """Score alignment with VTKL's mission and core capabilities.
+def _prepare_grant_text(opportunity: GrantOpportunity) -> str:
+    """Prepare comprehensive grant text for LLM evaluation.
     
-    VTKL focus areas:
-    - AI workflows
-    - Data governance
-    - Agent configuration
-    - Decision support systems
-    - Workflow automation
-    - MLOps
+    Args:
+        opportunity: Grant opportunity
+        
+    Returns:
+        Combined text with title, agency, description, and raw_text
+    """
+    parts = []
+    
+    if opportunity.title:
+        parts.append(f"Title: {opportunity.title}")
+    
+    if opportunity.agency:
+        parts.append(f"Agency: {opportunity.agency}")
+    
+    if opportunity.description:
+        parts.append(f"Description: {opportunity.description}")
+    
+    if opportunity.award_amount_min or opportunity.award_amount_max:
+        award_min = opportunity.award_amount_min or 0
+        award_max = opportunity.award_amount_max or award_min
+        if award_max > 0:
+            parts.append(f"Award Amount: ${award_min:,.0f} - ${award_max:,.0f}")
+        else:
+            parts.append(f"Award Amount: ${award_min:,.0f}")
+    
+    if opportunity.raw_text:
+        parts.append(f"Full Text: {opportunity.raw_text}")
+    
+    return "\n\n".join(parts)
+
+
+def _score_dimension_with_llm(
+    client: anthropic.Anthropic,
+    dimension: str,
+    grant_text: str,
+    model: str
+) -> DimensionScore:
+    """Score a single dimension using Anthropic LLM.
+    
+    Args:
+        client: Anthropic client instance
+        dimension: Dimension name (mission_fit, technical_alignment, etc.)
+        grant_text: Prepared grant text
+        model: Model identifier
+        
+    Returns:
+        DimensionScore with score and evidence citations
     """
     
-    text = (opportunity.description or "") + " " + (opportunity.raw_text or "")
+    # Get prompt for this dimension
+    prompt = get_prompt_for_dimension(dimension, grant_text)
     
-    # Find semantic matches
-    matches = find_semantic_matches(text)
-    vtkl_areas = get_vtkl_focus_areas()
-    
-    # Count how many VTKL focus areas are mentioned
-    matched_areas = set()
-    evidence_citations = []
-    
-    for category, capability, context in matches:
-        if capability in vtkl_areas:
-            matched_areas.add(capability)
-            if len(evidence_citations) < 3:  # Limit to 3 citations
-                evidence_citations.append(context)
-    
-    # Also check for direct focus area mentions
-    text_lower = text.lower()
-    for area in vtkl_areas:
-        if area.lower() in text_lower and area not in matched_areas:
-            matched_areas.add(area)
-            if len(evidence_citations) < 3:
-                ctx = _extract_quote(text, area)
-                if ctx:
-                    evidence_citations.append(ctx)
-    
-    # Score based on number of matched areas
-    num_areas = len(vtkl_areas)
-    num_matched = len(matched_areas)
-    
-    if num_matched == 0:
-        score = 20.0  # Minimal alignment
-    elif num_matched <= 2:
-        score = 50.0  # Some alignment
-    elif num_matched <= 4:
-        score = 75.0  # Good alignment
-    else:
-        score = 90.0  # Excellent alignment (CALIBRATED: was 95)
-    
-    # CALIBRATION FIX: Boost for explicit mission-critical terms
-    # AI/ML boost reduced from +10 to +5 to prevent overshooting on strong matches
-    if any(term in text_lower for term in ["ai", "artificial intelligence", "machine learning"]):
-        score = min(100.0, score + 5.0)
-    
-    # Additional boost for data governance (core VTKL capability)
-    if "data governance" in text_lower:
-        score = min(100.0, score + 5.0)
-    
-    # CALIBRATION FIX: Boost for favorable assets (NHO) that align with VTKL's strategic position
-    if eligibility and eligibility.assets:
-        if any("NHO" in asset or "Native Hawaiian" in asset for asset in eligibility.assets):
-            score = min(100.0, score + 15.0)
-    
-    if not evidence_citations:
-        evidence_citations = [opportunity.title or "No specific evidence found"]
-    
-    return DimensionScore(
-        score=score,
-        evidence_citations=evidence_citations[:3]
-    )
+    # Call Anthropic API
+    try:
+        message = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        # Parse JSON response
+        response_text = message.content[0].text
+        result = json.loads(response_text)
+        
+        score = float(result["score"])
+        citations = result["evidence_citations"]
+        
+        # Validate score range
+        score = max(0.0, min(100.0, score))
+        
+        # Ensure we have at least one citation
+        if not citations:
+            citations = ["No specific evidence provided"]
+        
+        return DimensionScore(
+            score=score,
+            evidence_citations=citations[:3]  # Limit to 3 citations
+        )
+        
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        # Fallback if LLM response is malformed
+        return DimensionScore(
+            score=50.0,
+            evidence_citations=[f"LLM response parsing error: {str(e)}"]
+        )
+    except Exception as e:
+        # Fallback for API errors
+        return DimensionScore(
+            score=50.0,
+            evidence_citations=[f"LLM API error: {str(e)}"]
+        )
 
 
 def _score_eligibility(eligibility: EligibilityResult, opportunity: GrantOpportunity) -> DimensionScore:
-    """Score based on eligibility assessment.
+    """Score based on eligibility assessment (auto-calculated, no LLM).
+    
+    Per VTK-105 acceptance criteria #5:
+    - EligibilityResult.is_eligible=False → automatic eligibility score=0 (skip LLM call)
     
     Scoring:
     - Hard blockers (8(a), HUBZone, wrong entity type, etc.) = 0
@@ -231,40 +217,8 @@ def _score_eligibility(eligibility: EligibilityResult, opportunity: GrantOpportu
     """
     
     if not eligibility.is_eligible:
-        # Check for different types of blockers
-        has_certification_blocker = any(
-            "8(a)" in blocker or "HUBZone" in blocker or "HARD BLOCKER" in blocker or
-            "certification" in blocker.lower() or "SDVOSB" in blocker or "WOSB" in blocker
-            for blocker in eligibility.blockers
-        )
-        
-        has_entity_type_blocker = any(
-            "entity type" in blocker.lower() or "non-profit" in blocker.lower() or
-            "academic" in blocker.lower() or "university" in blocker.lower()
-            for blocker in eligibility.blockers
-        )
-        
-        has_naics_blocker = any(
-            "NAICS" in blocker or "naics" in blocker.lower()
-            for blocker in eligibility.blockers
-        )
-        
-        has_security_blocker = any(
-            "security" in blocker.lower() or "clearance" in blocker.lower() or
-            "IL5" in blocker or "IL6" in blocker or "Top Secret" in blocker
-            for blocker in eligibility.blockers
-        )
-        
-        # Critical blockers = 0 score
-        if has_certification_blocker or has_entity_type_blocker or has_security_blocker:
-            score = 0.0
-        elif has_naics_blocker:
-            score = 5.0  # NAICS mismatch is serious but might work as subawardee
-        elif len(eligibility.blockers) > 2:
-            score = 5.0
-        else:
-            score = 15.0
-        
+        # Automatic score = 0 for ineligible opportunities
+        score = 0.0
         evidence_citations = eligibility.blockers[:3] if eligibility.blockers else [
             "Not eligible based on constraint checks"
         ]
@@ -292,184 +246,19 @@ def _score_eligibility(eligibility: EligibilityResult, opportunity: GrantOpportu
     )
 
 
-def _score_technical_alignment(opportunity: GrantOpportunity) -> DimensionScore:
-    """Score technical capability match using semantic mapping."""
+def _apply_ineligibility_penalty(dimension_score: DimensionScore, penalty_factor: float = 0.2) -> DimensionScore:
+    """Apply penalty to dimension score for ineligible opportunities.
     
-    text = (opportunity.description or "") + " " + (opportunity.raw_text or "")
-    
-    # Find all semantic matches
-    matches = find_semantic_matches(text)
-    
-    if not matches:
-        return DimensionScore(
-            score=30.0,
-            evidence_citations=["Limited technical detail in opportunity description"]
-        )
-    
-    # Group by category
-    categories_matched = set(cat for cat, _, _ in matches)
-    
-    # Score based on breadth and depth of matches
-    num_categories = len(categories_matched)
-    num_capabilities = len(matches)
-    
-    if num_categories >= 5 and num_capabilities >= 10:
-        score = 95.0  # Excellent alignment
-    elif num_categories >= 3 and num_capabilities >= 5:
-        score = 80.0  # Strong alignment
-    elif num_categories >= 2:
-        score = 65.0  # Moderate alignment
-    else:
-        score = 40.0  # Weak alignment
-    
-    # Extract evidence
-    evidence_citations = []
-    for _, capability, context in matches[:3]:
-        evidence_citations.append(f"{capability}: {context}")
-    
-    return DimensionScore(
-        score=score,
-        evidence_citations=evidence_citations if evidence_citations else [
-            "General technical requirements"
-        ]
-    )
-
-
-def _score_financial_viability(opportunity: GrantOpportunity) -> DimensionScore:
-    """Score financial fit based on award amount and VTKL capacity.
-    
-    VTKL financial capacity:
-    - Min: $100K
-    - Max: $5M
-    - Preferred: $500K - $2M
+    Args:
+        dimension_score: Original dimension score
+        penalty_factor: Factor to multiply score by (default 0.2 = 80% penalty)
+        
+    Returns:
+        New DimensionScore with penalized score
     """
-    
-    min_capacity = 100_000
-    max_capacity = 5_000_000
-    preferred_min = 500_000
-    preferred_max = 2_000_000
-    
-    # Get award amount
-    award_min = opportunity.award_amount_min or 0
-    award_max = opportunity.award_amount_max or award_min
-    
-    if award_max == 0 and award_min == 0:
-        # No financial info
-        return DimensionScore(
-            score=50.0,
-            evidence_citations=["No award amount specified"]
-        )
-    
-    avg_award = (award_min + award_max) / 2 if award_max > 0 else award_min
-    
-    # Score based on fit
-    if avg_award < min_capacity:
-        score = 20.0
-        reason = f"Award too small (${avg_award:,.0f} < ${min_capacity:,.0f} capacity)"
-    elif avg_award > max_capacity:
-        # CALIBRATION FIX: Less harsh penalty for oversized awards (was 10, now 20)
-        # Still a significant signal but not as extreme
-        score = 20.0
-        reason = f"Award exceeds capacity (${avg_award:,.0f} > ${max_capacity:,.0f} max)"
-    elif preferred_min <= avg_award <= preferred_max:
-        score = 100.0
-        reason = f"Ideal award range (${avg_award:,.0f})"
-    elif min_capacity <= avg_award < preferred_min:
-        # Scale based on proximity to preferred range
-        proximity = (avg_award - min_capacity) / (preferred_min - min_capacity)
-        score = 50.0 + (proximity * 30.0)  # 50-80 range
-        reason = f"Below preferred range (${avg_award:,.0f})"
-    else:  # preferred_max < avg_award <= max_capacity
-        # Scale based on proximity to max
-        proximity = (avg_award - preferred_max) / (max_capacity - preferred_max)
-        score = 80.0 - (proximity * 30.0)  # 50-80 range
-        reason = f"Large but manageable (${avg_award:,.0f})"
-    
-    evidence_citations = [reason]
-    
-    # Add total program funding context if available
-    if opportunity.estimated_total_program_funding:
-        total = opportunity.estimated_total_program_funding
-        evidence_citations.append(f"Total program funding: ${total:,.0f}")
-    
     return DimensionScore(
-        score=score,
-        evidence_citations=evidence_citations
-    )
-
-
-def _score_strategic_value(opportunity: GrantOpportunity) -> DimensionScore:
-    """Score long-term strategic value and relationship potential."""
-    
-    text = (opportunity.description or "") + " " + (opportunity.raw_text or "")
-    text_lower = text.lower()
-    
-    score = 50.0  # Baseline
-    evidence_citations = []
-    
-    # Check for repeat/multi-year opportunities
-    if any(term in text_lower for term in [
-        "multi-year",
-        "multi year",
-        "idiq",
-        "indefinite delivery",
-        "blanket purchase",
-        "bpa",
-        "multiple awards"
-    ]):
-        score += 20.0
-        evidence_citations.append("Multi-year or IDIQ contract potential")
-    
-    # Check for high-value agencies
-    high_value_agencies = [
-        "defense",
-        "dod",
-        "navy",
-        "air force",
-        "army",
-        "nasa",
-        "doe",
-        "energy",
-        "intelligence",
-        "homeland security"
-    ]
-    
-    agency_lower = (opportunity.agency or "").lower()
-    if any(agency in agency_lower for agency in high_value_agencies):
-        score += 15.0
-        evidence_citations.append(f"High-value agency: {opportunity.agency}")
-    
-    # Check for innovation/R&D opportunities
-    if any(term in text_lower for term in [
-        "research and development",
-        "r&d",
-        "innovation",
-        "prototype",
-        "proof of concept",
-        "pilot program"
-    ]):
-        score += 10.0
-        evidence_citations.append("Innovation/R&D opportunity with follow-on potential")
-    
-    # Check for small business growth potential
-    if any(term in text_lower for term in [
-        "small business growth",
-        "mentor-protege",
-        "teaming encouraged",
-        "prime contractor opportunity"
-    ]):
-        score += 10.0
-        evidence_citations.append("Growth and teaming opportunities")
-    
-    # Cap at 100
-    score = min(100.0, score)
-    
-    if not evidence_citations:
-        evidence_citations = ["Standard strategic value"]
-    
-    return DimensionScore(
-        score=score,
-        evidence_citations=evidence_citations
+        score=dimension_score.score * penalty_factor,
+        evidence_citations=dimension_score.evidence_citations
     )
 
 
@@ -535,3 +324,59 @@ def _extract_quote(text: str, keyword: str, max_length: int = 150) -> str:
         quote = "..." + quote
     
     return quote
+
+
+# Optional: Function to save scoring result to database
+def score_and_save(
+    opportunity: GrantOpportunity,
+    eligibility: EligibilityResult,
+    db_client,  # Supabase client or similar
+    weights: ScoringWeights = DEFAULT_WEIGHTS,
+    llm_model: str = DEFAULT_LLM_MODEL
+) -> ScoringResult:
+    """Score opportunity and save result to database.
+    
+    Also updates grant status to "scored".
+    
+    Args:
+        opportunity: Grant opportunity to score
+        eligibility: Eligibility assessment result
+        db_client: Database client for saving results
+        weights: Scoring weights configuration
+        llm_model: Anthropic model to use
+        
+    Returns:
+        ScoringResult with dimension scores and composite score
+    """
+    
+    # Score the opportunity
+    result = score_opportunity(opportunity, eligibility, weights, llm_model)
+    
+    # Save to database
+    scoring_data = {
+        "opportunity_id": result.opportunity_id,
+        "mission_fit_score": result.mission_fit.score,
+        "mission_fit_citations": result.mission_fit.evidence_citations,
+        "eligibility_score": result.eligibility.score,
+        "eligibility_citations": result.eligibility.evidence_citations,
+        "technical_alignment_score": result.technical_alignment.score,
+        "technical_alignment_citations": result.technical_alignment.evidence_citations,
+        "financial_viability_score": result.financial_viability.score,
+        "financial_viability_citations": result.financial_viability.evidence_citations,
+        "strategic_value_score": result.strategic_value.score,
+        "strategic_value_citations": result.strategic_value.evidence_citations,
+        "composite_score": result.composite_score,
+        "verdict": result.verdict,
+        "scoring_weights_version": result.scoring_weights_version,
+        "llm_model": result.llm_model,
+        "scored_at": result.scored_at.isoformat(),
+    }
+    
+    db_client.table("scoring_results").insert(scoring_data).execute()
+    
+    # Update grant status to "scored"
+    db_client.table("grant_opportunities").update(
+        {"status": "scored"}
+    ).eq("source_opportunity_id", opportunity.source_opportunity_id).execute()
+    
+    return result

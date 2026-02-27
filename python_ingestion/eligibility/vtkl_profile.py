@@ -1,67 +1,85 @@
 """VTKL entity profile configuration.
 
 Defines VTKL's capabilities, certifications, and constraints for eligibility assessment.
-All values have sensible defaults but can be overridden via environment variables.
+Environment variable overrides (prefixed VTKL_) take precedence over defaults.
 """
 
 import os
 from datetime import datetime, timezone
 
 
-def _parse_csv(env_key: str, default: list[str]) -> list[str]:
-    """Parse comma-separated env var into list, or return default."""
-    val = os.environ.get(env_key)
-    if val:
-        return [v.strip() for v in val.split(",") if v.strip()]
-    return default
+def _env(key: str, default: str) -> str:
+    """Read VTKL_ prefixed env var with fallback."""
+    return os.environ.get(f"VTKL_{key}", default)
 
 
-def _parse_bool(env_key: str, default: bool) -> bool:
-    """Parse boolean env var (true/false/1/0)."""
-    val = os.environ.get(env_key)
-    if val is not None:
-        return val.lower() in ("true", "1", "yes")
-    return default
+def _env_bool(key: str, default: bool) -> bool:
+    """Read VTKL_ prefixed env var as boolean."""
+    val = os.environ.get(f"VTKL_{key}")
+    if val is None:
+        return default
+    return val.lower() in ("1", "true", "yes")
 
 
-def _parse_datetime(env_key: str, default: datetime) -> datetime:
-    """Parse ISO-format datetime env var."""
-    val = os.environ.get(env_key)
-    if val:
-        dt = datetime.fromisoformat(val)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    return default
+def _env_list(key: str, default: list[str]) -> list[str]:
+    """Read VTKL_ prefixed env var as comma-separated list."""
+    val = os.environ.get(f"VTKL_{key}")
+    if val is None:
+        return default
+    return [v.strip() for v in val.split(",") if v.strip()]
 
 
-VTKL_PROFILE = {
-    "entity_type": os.environ.get("VTKL_ENTITY_TYPE", "for-profit_corporation"),
-    "sam_registration": {
-        "entity_id": os.environ.get("VTKL_SAM_ENTITY_ID", "ML49GKWHGCX6"),
-        "cage_code": os.environ.get("VTKL_SAM_CAGE_CODE", "16RM8"),
-        "expiry_date": _parse_datetime("VTKL_SAM_EXPIRY", datetime(2026, 11, 11, tzinfo=timezone.utc)),
-        "status": "active"
-    },
-    "naics_primary": _parse_csv("VTKL_NAICS_PRIMARY", ["541511", "541512", "541990"]),
-    "naics_optional": ["541715", "518210"],
-    "security_posture": _parse_csv("VTKL_SECURITY_POSTURE", ["IL2", "IL3", "IL4"]),
-    "location": {
-        "state": os.environ.get("VTKL_LOCATION_STATE", "HI"),
-        "city": "Honolulu",
-        "nho_eligible": _parse_bool("VTKL_NHO_ELIGIBLE", True)
-    },
-    "certifications": {
-        "8a": False,
-        "8(a)": False,
-        "hubzone": False,
-        "HUBZone": False,
-        "sdvosb": False,
-        "wosb": False
-    },
-    "financial_capacity": {
-        "min_award": 100_000,
-        "max_award": 5_000_000,
-        "preferred_range": (500_000, 2_000_000)
+def _env_int(key: str, default: int) -> int:
+    """Read VTKL_ prefixed env var as integer."""
+    val = os.environ.get(f"VTKL_{key}")
+    if val is None:
+        return default
+    return int(val)
+
+
+def _build_profile() -> dict:
+    """Build VTKL profile with env var overrides."""
+    sam_expiry_str = os.environ.get("VTKL_SAM_EXPIRY")
+    if sam_expiry_str:
+        sam_expiry = datetime.fromisoformat(sam_expiry_str)
+        if sam_expiry.tzinfo is None:
+            sam_expiry = sam_expiry.replace(tzinfo=timezone.utc)
+    else:
+        sam_expiry = datetime(2026, 11, 11, tzinfo=timezone.utc)
+
+    return {
+        "entity_type": _env("ENTITY_TYPE", "for-profit_corporation"),
+        "sam_registration": {
+            "entity_id": _env("SAM_ENTITY_ID", "ML49GKWHGCX6"),
+            "cage_code": _env("SAM_CAGE_CODE", "16RM8"),
+            "expiry_date": sam_expiry,
+            "status": _env("SAM_STATUS", "active"),
+        },
+        "naics_primary": _env_list("NAICS_PRIMARY", ["541511", "541512", "541990"]),
+        "naics_optional": _env_list("NAICS_OPTIONAL", ["541715", "518210"]),
+        "security_posture": _env_list("SECURITY_POSTURE", ["IL2", "IL3", "IL4"]),
+        "location": {
+            "state": _env("STATE", "HI"),
+            "city": _env("CITY", "Honolulu"),
+            "nho_eligible": _env_bool("NHO_ELIGIBLE", True),
+        },
+        "certifications": {
+            "8a": _env_bool("CERT_8A", False),
+            "8(a)": _env_bool("CERT_8A", False),
+            "hubzone": _env_bool("CERT_HUBZONE", False),
+            "HUBZone": _env_bool("CERT_HUBZONE", False),
+            "sdvosb": _env_bool("CERT_SDVOSB", False),
+            "wosb": _env_bool("CERT_WOSB", False),
+        },
+        "financial_capacity": {
+            "min_award": _env_int("MIN_AWARD", 100_000),
+            "max_award": _env_int("MAX_AWARD", 5_000_000),
+            "preferred_range": (
+                _env_int("PREF_AWARD_MIN", 500_000),
+                _env_int("PREF_AWARD_MAX", 2_000_000),
+            ),
+        },
     }
-}
+
+
+VTKL_PROFILE = _build_profile()
